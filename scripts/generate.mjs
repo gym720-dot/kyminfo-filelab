@@ -56,7 +56,7 @@ const nav = [
   ['image-compress','이미지 압축'],['image-resize','크기 조절'],['image-to-webp','형식 변환'],
   ['image-metadata-remove','메타데이터'],['excel-analyze','엑셀 분석'],['guide','이용 안내']
 ];
-function cards(current='') { return `<div class="tool-grid">${tools.filter(p => p.slug !== current).map(p => `<a class="tool-card" href="${path(p.slug)}"><span class="tool-tag">${p.mode.startsWith('excel')?'EXCEL':'IMAGE'}</span><h3>${escape(p.h1)}</h3><p>${escape(p.lead)}</p><span class="card-link">도구 열기 ↗</span></a>`).join('')}</div>`; }
+function cards(current='') { return `<div class="tool-grid">${tools.filter(p => p.slug !== current).map(p => `<a class="tool-card" href="${path(p.slug)}"><h3>${escape(p.h1)}</h3><p>${escape(p.lead)}</p><span class="card-link">도구 열기 ↗</span></a>`).join('')}</div>`; }
 function html(p) {
  const canonical=domain+path(p.slug);
  const sections=p.sections?.map(([h,t])=>`<section class="content-card"><h2>${escape(h)}</h2><p>${escape(t)}</p>${p.slug==='contact'&&h==='문의 방법'?'<p><a class="contact-link" href="https://github.com/gym720-dot/kyminfo-clock/issues" target="_blank" rel="noopener noreferrer">키미 도구 공통 문의 창구 열기 ↗</a></p>':''}</section>`).join('')||'';

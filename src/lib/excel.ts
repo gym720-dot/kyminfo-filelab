@@ -23,6 +23,7 @@ async function limits(file:File):Promise<void> {
   for(let i=tail.length-22;i>=0;i--) if(u32(tailView,i)===0x06054b50){eocd=i;break;}
   if(eocd<0) throw new Error('ZIP 끝 정보를 찾지 못했습니다.');
   const entries=u16(tailView,eocd+10);
+  if(u16(tailView,eocd+4)!==0 || u16(tailView,eocd+6)!==0 || u16(tailView,eocd+8)!==entries) throw new Error('여러 디스크로 나뉜 ZIP은 지원하지 않습니다.');
   const dirSize=u32(tailView,eocd+12), dirOffset=u32(tailView,eocd+16);
   if(entries===0xffff || dirSize===0xffffffff || dirOffset===0xffffffff) throw new Error('ZIP64 형식은 지원하지 않습니다.');
   if(entries<3 || entries>MAX_ENTRIES) throw new Error('XLSX 내부 파일 수가 허용 범위를 벗어났습니다.');
@@ -37,7 +38,7 @@ async function limits(file:File):Promise<void> {
     if(flags&1) throw new Error('암호화된 XLSX는 지원하지 않습니다.');
     if(method!==0 && method!==8) throw new Error('지원하지 않는 ZIP 압축 방식입니다.');
     if(compressed===0xffffffff || unpacked===0xffffffff) throw new Error('ZIP64 항목은 지원하지 않습니다.');
-    if(unpacked>MAX_UNPACKED || (compressed>0 && unpacked/compressed>500)) throw new Error('과도한 압축률 또는 크기의 내부 파일이 있습니다.');
+    if(unpacked>MAX_UNPACKED || (compressed===0 && unpacked>0) || (compressed>0 && unpacked/compressed>500)) throw new Error('과도한 압축률 또는 크기의 내부 파일이 있습니다.');
     total+=unpacked;
     if(total>MAX_UNPACKED) throw new Error('압축 해제 크기가 120MB를 넘습니다.');
     pos+=46+nameLength+extra+comment;
@@ -95,13 +96,19 @@ export async function analyzeExcel(file:File):Promise<ExcelReport> {
 // compared byte-for-byte with the original before offering a download.
 export async function optimizeExcel(file:File, signal?:AbortSignal, onProgress?:(p:number)=>void):Promise<ExcelOptimized> {
   const source=await load(file);
-  const names=Object.keys(source.files).filter(n=>!source.files[n].dir);
+  const names=Object.keys(source.files);
+  const fileNames=names.filter(n=>!source.files[n].dir);
   const fresh=new JSZip();
   let checked=0;
   for(const name of names) {
     if(signal?.aborted) throw new Error('작업이 취소되었습니다.');
-    const bytes=await source.files[name].async('uint8array');
-    fresh.file(name,bytes,{binary:true,compression:'DEFLATE',compressionOptions:{level:9},createFolders:false});
+    const entry=source.files[name];
+    const options={createFolders:false,date:entry.date,comment:entry.comment,unixPermissions:entry.unixPermissions,dosPermissions:entry.dosPermissions};
+    if(entry.dir) fresh.file(name,'',{...options,dir:true});
+    else {
+      const bytes=await entry.async('uint8array');
+      fresh.file(name,bytes,{...options,binary:true,compression:'DEFLATE',compressionOptions:{level:9}});
+    }
     checked++;
     onProgress?.(Math.round(checked/names.length*45));
   }
@@ -109,15 +116,15 @@ export async function optimizeExcel(file:File, signal?:AbortSignal, onProgress?:
   const output=await fresh.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:9},platform:'DOS'},meta=>onProgress?.(45+Math.round(meta.percent*.25)));
   if(output.size>=file.size) throw new Error('이미 효율적으로 압축되어 추가 용량 감소가 어렵습니다. 원본을 유지해 주세요.');
   const verified=await JSZip.loadAsync(output,{checkCRC32:true,createFolders:false});
-  const resultNames=Object.keys(verified.files).filter(n=>!verified.files[n].dir);
-  if(resultNames.length!==names.length || names.some(n=>!verified.file(n))) throw new Error('내부 항목 수 또는 이름이 일치하지 않아 결과를 제공하지 않습니다.');
+  const resultNames=Object.keys(verified.files);
+  if(resultNames.length!==names.length || names.some(n=>!verified.files[n] || verified.files[n].dir!==source.files[n].dir)) throw new Error('내부 항목 수 또는 이름이 일치하지 않아 결과를 제공하지 않습니다.');
   checked=0;
-  for(const name of names) {
+  for(const name of fileNames) {
     if(signal?.aborted) throw new Error('작업이 취소되었습니다.');
     const [a,b]=await Promise.all([source.files[name].async('uint8array'),verified.files[name].async('uint8array')]);
     if(a.length!==b.length || a.some((byte,i)=>byte!==b[i])) throw new Error('내부 항목의 바이트가 달라 결과를 제공하지 않습니다.');
     checked++;
-    onProgress?.(70+Math.round(checked/names.length*30));
+    onProgress?.(70+Math.round(checked/fileNames.length*30));
   }
   return {blob:output,name:resultName(file.name,'-키미파일랩','xlsx'),before:file.size,after:output.size,checked};
 }

@@ -18,8 +18,11 @@ export interface ImageSettings {
 export interface ImageResult {
   blob: Blob;
   name: string;
+  sourceWidth: number;
+  sourceHeight: number;
   width: number;
   height: number;
+  format: OutputFormat;
   reached?: boolean;
   note: string;
 }
@@ -94,10 +97,16 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
     let height = bitmap.height;
     if (s.mode === 'resize') {
       const w = Number(s.width), h = Number(s.height);
-      if (w > 0 && h > 0 && !s.keepRatio) { width = Math.round(w); height = Math.round(h); }
-      else if (w > 0) { width = Math.round(w); height = Math.round(bitmap.height * width / bitmap.width); }
-      else if (h > 0) { height = Math.round(h); width = Math.round(bitmap.width * height / bitmap.height); }
-      else throw new Error('가로 또는 세로 크기를 입력해 주세요.');
+      if (![w,h].every(n => Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 16000)) throw new Error('가로·세로는 0부터 16000까지의 정수로 입력해 주세요.');
+      if (s.keepRatio) {
+        if (w > 0 && h > 0) throw new Error('비율 유지 시 가로 또는 세로 한쪽만 입력해 주세요.');
+        if (w > 0) { width = w; height = Math.round(bitmap.height * width / bitmap.width); }
+        else if (h > 0) { height = h; width = Math.round(bitmap.width * height / bitmap.height); }
+        else throw new Error('가로 또는 세로 크기를 입력해 주세요.');
+      } else {
+        if (w < 1 || h < 1) throw new Error('비율 유지를 끄면 가로와 세로를 모두 입력해 주세요.');
+        width = w; height = h;
+      }
     }
     if (width < 1 || height < 1 || width * height > 80_000_000) throw new Error('출력 이미지 크기가 허용 범위를 벗어났습니다.');
     let canvas = draw(bitmap, width, height, format, s.background);
@@ -146,7 +155,7 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
       const report = await inspectMetadata(new File([blob], 'result.' + ext(format), {type:mime(format)}));
       note = report.some(x => x.startsWith('GPS')) ? '처리 후에도 GPS 항목이 감지됩니다. 다운로드 전 확인해 주세요.' : '처리 후 지원 범위에서 GPS 항목이 검출되지 않았습니다. 모든 비표준 메타데이터 제거를 보장하지는 않습니다.';
     }
-    return {blob, name:resultName(file.name, s.mode === 'metadata' ? '-정보삭제' : '-키미파일랩', ext(format)), width, height, reached, note};
+    return {blob, name:resultName(file.name, s.mode === 'metadata' ? '-정보삭제' : '-키미파일랩', ext(format)), sourceWidth:bitmap.width, sourceHeight:bitmap.height, width, height, format, reached, note};
   } finally {
     bitmap.close();
   }
