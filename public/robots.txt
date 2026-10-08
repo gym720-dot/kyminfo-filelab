@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://file.kyminfo.com/sitemap.xml

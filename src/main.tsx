@@ -1,0 +1,144 @@
+import {useEffect, useRef, useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import './styles.css';
+import {fileSignature,formatBytes,saveBlob,safeName} from './lib/common';
+import type {ExcelReport,ExcelOptimized} from './lib/excel';
+import type {ImageResult,ImageMode,ImageSettings,OutputFormat} from './lib/image';
+
+type Mode=ImageMode|'excel-analyze'|'excel-optimize';
+type Result=ImageResult|ExcelOptimized;
+type Row={id:string;file:File;kind?:string|null;sourceUrl?:string;resultUrl?:string;status:'대기'|'처리 중'|'완료'|'실패';error?:string;result?:Result;report?:ExcelReport;metadata?:string[];progress?:number};
+const imageModes:Mode[]=['compress','resize','convert','target','metadata'];
+const isImage=(mode:Mode)=>imageModes.includes(mode);
+const labels:Record<Mode,string>={compress:'이미지 압축',resize:'크기 조절',convert:'형식 변환',target:'목표 용량',metadata:'위치정보 삭제','excel-analyze':'엑셀 분석','excel-optimize':'엑셀 최적화'};
+const initialSettings:ImageSettings={mode:'compress',format:'original',preset:'quick',quality:80,width:1200,height:0,keepRatio:true,targetKB:100,allowResize:false,background:'#ffffff'};
+
+function App({startMode,home}:{startMode:Mode;home:boolean}) {
+  const [mode,setMode]=useState<Mode>(startMode);
+  const [settings,setSettings]=useState<ImageSettings>({...initialSettings,mode:isImage(startMode)?startMode as ImageMode:'compress',format:startMode==='convert'||startMode==='target'?'webp':'original'});
+  const [rows,setRows]=useState<Row[]>([]);
+  const [notice,setNotice]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [compare,setCompare]=useState(50);
+  const input=useRef<HTMLInputElement>(null);
+  const controller=useRef<AbortController|null>(null);
+  const objectUrls=useRef(new Set<string>());
+  const fileCount=useRef(0);
+  const update=(id:string,patch:Partial<Row>)=>setRows(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
+  const makeUrl=(blob:Blob)=>{const url=URL.createObjectURL(blob);objectUrls.current.add(url);return url;};
+  const clear=()=>{controller.current?.abort();setRows([]);for(const url of objectUrls.current)URL.revokeObjectURL(url);objectUrls.current.clear();setNotice('목록을 비웠습니다.');};
+  useEffect(()=>()=>{controller.current?.abort();for(const url of objectUrls.current)URL.revokeObjectURL(url);},[]);
+  async function addFiles(files:File[]) {
+    const max=isImage(mode)?50:10, perFile=isImage(mode)?30:20;
+    if(rows.length+files.length>max){setNotice(`한 번에 최대 ${max}개까지 선택할 수 있습니다.`);return;}
+    const accepted:Row[]=[];
+    for(const file of files){
+      const sig=await fileSignature(file);
+      if(file.size>perFile*1024*1024){setNotice(`${safeName(file.name)}: ${perFile}MB 한도를 넘었습니다.`);continue;}
+      if(isImage(mode)?!['jpeg','png','webp'].includes(sig||''):sig!=='zip'||!/\.xlsx$/i.test(file.name)){setNotice(`${safeName(file.name)}: 지원하지 않는 형식입니다.`);continue;}
+      const id=`${Date.now()}-${fileCount.current++}`;
+      accepted.push({id,file,kind:sig,status:'대기',sourceUrl:isImage(mode)?makeUrl(file):undefined});
+    }
+    setRows(prev=>[...prev,...accepted]);
+    if(accepted.length) setNotice(`${accepted.length}개 파일을 추가했습니다.`);
+  }
+  function switchMode(next:Mode) {
+    if(busy)return;
+    clear();setMode(next);setSettings({...initialSettings,mode:isImage(next)?next as ImageMode:'compress',format:next==='convert'||next==='target'?'webp':'original'});setNotice('');
+  }
+  useEffect(()=>{
+    const paste=(event:ClipboardEvent)=>{
+      if(!isImage(mode)||!event.clipboardData?.files.length)return;
+      const files=Array.from(event.clipboardData.files).filter(f=>f.type.startsWith('image/'));
+      if(files.length){event.preventDefault();void addFiles(files);}
+    };
+    window.addEventListener('paste',paste);
+    return ()=>window.removeEventListener('paste',paste);
+  });
+  async function run(ids?:string[]){
+    if(busy)return;
+    const pending=rows.filter(r=>(ids?ids.includes(r.id):r.status!=='완료'));
+    if(!pending.length){setNotice('처리할 파일을 먼저 선택해 주세요.');return;}
+    const abort=new AbortController();controller.current=abort;setBusy(true);setNotice('');
+    for(const row of pending){
+      if(abort.signal.aborted)break;
+      update(row.id,{status:'처리 중',error:undefined,progress:0});
+      try{
+        if(isImage(mode)){
+          const {inspectMetadata,processImage}=await import('./lib/image');
+          const metadata=mode==='metadata'?await inspectMetadata(row.file):undefined;
+          const result=await processImage(row.file,{...settings,mode:mode as ImageMode},abort.signal);
+          const resultUrl=makeUrl(result.blob);
+          update(row.id,{status:'완료',result,resultUrl,metadata,progress:100});
+        }else{
+          const {analyzeExcel,optimizeExcel}=await import('./lib/excel');
+          const report=await analyzeExcel(row.file);
+          update(row.id,{report,progress:mode==='excel-optimize'?35:100});
+          if(mode==='excel-optimize'){
+            const result=await optimizeExcel(row.file,abort.signal,p=>update(row.id,{progress:p}));
+            update(row.id,{status:'완료',report,result,progress:100});
+          }else update(row.id,{status:'완료',report,progress:100});
+        }
+      }catch(e){update(row.id,{status:'실패',error:e instanceof Error?e.message:'처리하지 못했습니다.'});}
+    }
+    setBusy(false);controller.current=null;
+  }
+  function remove(row:Row){
+    if(row.sourceUrl){URL.revokeObjectURL(row.sourceUrl);objectUrls.current.delete(row.sourceUrl);}
+    if(row.resultUrl){URL.revokeObjectURL(row.resultUrl);objectUrls.current.delete(row.resultUrl);}
+    setRows(prev=>prev.filter(r=>r.id!==row.id));
+  }
+  async function zipResults(){
+    const done=rows.filter(r=>r.result?.blob);
+    if(!done.length){setNotice('ZIP에 넣을 처리 결과가 없습니다.');return;}
+    setNotice('ZIP 파일을 생성하고 있습니다…');
+    try{
+      const JSZip=(await import('jszip')).default;
+      const total=done.reduce((sum,row)=>sum+row.result!.blob.size,0);
+      if(total>200*1024*1024) throw new Error('ZIP 총 크기가 200MB를 넘습니다.');
+      const zip=new JSZip();
+      const used=new Set<string>();
+      for(const row of done){
+        let name=safeName(row.result!.name);const dot=name.lastIndexOf('.'),stem=dot>=0?name.slice(0,dot):name,ext=dot>=0?name.slice(dot):'';
+        let index=2;while(used.has(name))name=`${stem}-${index++}${ext}`;
+        used.add(name);zip.file(name,row.result!.blob);
+      }
+      const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+      saveBlob(blob,'키미파일랩-결과.zip');setNotice(`${done.length}개 결과를 ZIP으로 저장했습니다.`);
+    }catch(e){setNotice(e instanceof Error?e.message:'ZIP 생성에 실패했습니다. 개별 다운로드를 이용해 주세요.');}
+  }
+  const done=rows.filter(r=>r.status==='완료'), originals=done.reduce((v,r)=>v+r.file.size,0), outputs=done.reduce((v,r)=>v+(r.result?.blob.size||r.file.size),0);
+  const pngOnly=settings.format==='png'||(settings.format==='original'&&rows.length>0&&rows.every(r=>r.kind==='png'));
+  const firstPreview=rows.find(r=>r.sourceUrl&&r.resultUrl);
+  return <div className="app-shell">
+    {home&&<div className="mode-tabs" role="tablist" aria-label="도구 종류"><button role="tab" aria-selected={isImage(mode)} className={isImage(mode)?'active':''} onClick={()=>switchMode('compress')}>이미지 도구</button><button role="tab" aria-selected={!isImage(mode)} className={!isImage(mode)?'active':''} onClick={()=>switchMode('excel-analyze')}>엑셀 도구</button></div>}
+    <div className="upload-card">
+      <div className="upload-heading"><div><span className="eyebrow">{isImage(mode)?'IMAGE WORKSPACE':'EXCEL WORKSPACE'}</span><h3>{labels[mode]}</h3><p>{isImage(mode)?'JPG · PNG · WebP':'XLSX'} · 한 파일당 최대 {isImage(mode)?'30':'20'}MB · {isImage(mode)?'최대 50':'최대 10'}개</p></div><span className="privacy-pill">↗ 파일 전송 없음</span></div>
+      <div className="drop-zone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(!busy)void addFiles(Array.from(e.dataTransfer.files));}}><div className="drop-symbol" aria-hidden="true">＋</div><strong>파일을 끌어놓거나 선택해 주세요</strong><p>선택한 파일은 현재 브라우저에서 처리됩니다.</p><button type="button" className="primary-button" disabled={busy} onClick={()=>input.current?.click()}>파일 선택하기</button><input ref={input} className="sr-only" type="file" accept={isImage(mode)?'image/jpeg,image/png,image/webp':'.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'} multiple onChange={e=>{if(!busy)void addFiles(Array.from(e.currentTarget.files||[]));e.currentTarget.value='';}} /></div>
+      {isImage(mode)&&<p className="small-hint">클립보드 이미지는 Ctrl+V로 붙여넣을 수도 있습니다. 움직이는 WebP는 지원하지 않습니다.</p>}
+    </div>
+    {rows.length>0&&<div className="options-card">
+      {isImage(mode)&&<div className="options-grid">
+        {mode!=='metadata'&&<label>출력 형식<select value={settings.format} onChange={e=>setSettings({...settings,format:e.target.value as OutputFormat|'original'})}><option value="original">원본 형식</option><option value="jpeg">JPG</option><option value="png">PNG</option><option value="webp">WebP</option></select></label>}
+        {mode==='compress'&&!pngOnly&&<><label>압축 방식<select value={settings.preset} onChange={e=>setSettings({...settings,preset:e.target.value as ImageSettings['preset']})}><option value="quick">빠른 압축</option><option value="high">고화질</option><option value="strong">강력 압축</option><option value="custom">직접 설정</option></select></label>{settings.preset==='custom'&&<label>화질 {settings.quality}%<input type="range" min="30" max="100" value={settings.quality} onChange={e=>setSettings({...settings,quality:Number(e.target.value)})}/></label>}</>}
+        {mode==='resize'&&<><label>가로(px)<input type="number" min="0" max="16000" value={settings.width||''} onChange={e=>setSettings({...settings,width:Number(e.target.value)})}/></label><label>세로(px)<input type="number" min="0" max="16000" value={settings.height||''} onChange={e=>setSettings({...settings,height:Number(e.target.value)})}/></label><label className="check-label"><input type="checkbox" checked={settings.keepRatio} onChange={e=>setSettings({...settings,keepRatio:e.target.checked})}/> 원본 비율 유지</label></>}
+        {mode==='target'&&<><label>목표 용량 (KB)<input type="number" min="1" max="30720" value={settings.targetKB} onChange={e=>setSettings({...settings,targetKB:Number(e.target.value)})}/></label><div className="preset-row">{[50,100,200,300,500,1024].map(n=><button type="button" key={n} className={settings.targetKB===n?'selected':''} onClick={()=>setSettings({...settings,targetKB:n})}>{n===1024?'1MB':n+'KB'}</button>)}</div><label className="check-label"><input type="checkbox" checked={settings.allowResize} onChange={e=>setSettings({...settings,allowResize:e.target.checked})}/> 필요하면 해상도 축소 허용</label></>}
+        {settings.format==='jpeg'&&<label>투명 부분 배경색<input type="color" value={settings.background} onChange={e=>setSettings({...settings,background:e.target.value})}/></label>}
+        {pngOnly&&mode==='compress'&&<p className="option-note">PNG에는 화질 설정이 적용되지 않습니다. 더 작은 파일이 필요하면 WebP 변환 또는 크기 축소를 선택하세요.</p>}
+        {mode==='metadata'&&<p className="option-note">재인코딩 후 검출 가능한 EXIF·GPS를 다시 검사합니다. 색상 프로파일이나 일부 비표준 정보는 별도로 확인해 주세요.</p>}
+      </div>}
+      {!isImage(mode)&&<p className="option-note">{mode==='excel-analyze'?'분석은 읽기 전용이며 원본을 변경하지 않습니다.':'내부 항목의 바이트를 비교하고 실제로 작아진 경우에만 결과를 제공합니다. 전자서명·매크로·암호화 파일은 제외합니다.'}</p>}
+      <div className="action-row"><button className="primary-button" disabled={busy} onClick={()=>void run()}>{busy?'처리 중…':mode==='excel-analyze'?'용량 분석하기':mode==='excel-optimize'?'분석 후 안전하게 최적화':'파일 처리하기'}</button>{busy&&<button className="subtle-button" onClick={()=>controller.current?.abort()}>작업 취소</button>}<button className="subtle-button" disabled={busy} onClick={clear}>목록 비우기</button></div>
+    </div>}
+    {notice&&<p className="notice" role="status">{notice}</p>}
+    {rows.length>0&&<section className="results-section" aria-label="파일 결과"><div className="results-head"><h3>파일 목록 <span>{rows.length}개</span></h3>{rows.some(r=>r.result?.blob)&&<button className="subtle-button" disabled={busy} onClick={()=>void zipResults()}>완료 파일 ZIP 다운로드 ↓</button>}</div><div className="file-list">{rows.map(row=><article className="file-row" key={row.id}><div className="file-row-top">{row.sourceUrl?<img src={row.sourceUrl} alt="" className="file-thumb"/>:<span className="excel-thumb" aria-hidden="true">X</span>}<div className="file-name"><strong title={row.file.name}>{row.file.name}</strong><span>원본 {formatBytes(row.file.size)} · {row.status}{row.progress!=null&&row.status==='처리 중'?` ${row.progress}%`:''}</span></div><button className="icon-button" disabled={busy} aria-label={`${row.file.name} 제거`} onClick={()=>remove(row)}>×</button></div>{row.error&&<p className="file-error" role="alert">{row.error}</p>}{row.metadata&&<div className="metadata-list"><strong>원본에서 확인한 항목</strong>{row.metadata.map((m,i)=><span key={i}>{m}</span>)}</div>}{row.report&&<div className="excel-report"><strong>시트 {row.report.sheets.length}개 · 내부 압축 해제 크기 {formatBytes(row.report.totalUnpacked)}</strong><p>시트: {row.report.sheets.join(', ')||'확인 불가'}</p><p>가장 큰 구성 분류: {row.report.dominant}</p><details><summary>용량이 큰 내부 항목 보기</summary><ul>{row.report.parts.slice(0,12).map(p=><li key={p.name}><span>{p.group} · {p.name}</span><b>{formatBytes(p.bytes)}</b></li>)}</ul><small>이 크기는 압축 해제 후 크기이며 XLSX 파일 전체 크기와 합산되지 않습니다.</small></details></div>}{row.result&&<div className="result-line"><div><strong>{formatBytes(row.file.size)} → {formatBytes(row.result.blob.size)}</strong><small>{row.result.blob.size<=row.file.size?`${((1-row.result.blob.size/row.file.size)*100).toFixed(1)}% 감소`:`${((row.result.blob.size/row.file.size-1)*100).toFixed(1)}% 증가`}</small></div><button className="download-button" onClick={()=>saveBlob(row.result!.blob,row.result!.name)}>결과 다운로드 ↓</button></div>}{row.result&&'note'in row.result&&<p className="result-note">{row.result.note}</p>}{row.status==='실패'&&!busy&&<button className="text-button" onClick={()=>void run([row.id])}>다시 시도 ↗</button>}</article>)}</div></section>}
+    {firstPreview?.sourceUrl&&firstPreview.resultUrl&&<section className="preview-section"><div className="results-head"><h3>이미지 전후 비교</h3><span>슬라이더를 움직여 확인하세요</span></div><div className="compare-box"><img src={firstPreview.resultUrl} alt="처리 후 미리보기"/><img className="compare-source" style={{clipPath:`inset(0 ${100-compare}% 0 0)`}} src={firstPreview.sourceUrl} alt="원본 미리보기"/><div className="compare-divider" style={{left:`${compare}%`}}/><span className="compare-label before-label">원본</span><span className="compare-label after-label">결과</span></div><label className="compare-range">비교 위치 <input type="range" min="0" max="100" value={compare} onChange={e=>setCompare(Number(e.target.value))}/></label></section>}
+    {done.length>0&&<div className="summary-card"><div><span>완료 파일</span><strong>{done.length}개</strong></div><div><span>원본 합계</span><strong>{formatBytes(originals)}</strong></div><div><span>결과 합계</span><strong>{formatBytes(outputs)}</strong></div><div><span>전체 차이</span><strong>{formatBytes(Math.abs(originals-outputs))} {outputs<=originals?'감소':'증가'}</strong></div></div>}
+  </div>;
+}
+
+const root=document.getElementById('tool-root');
+if(root){
+  const mode=(root.dataset.mode||'compress') as Mode;
+  createRoot(root).render(<App startMode={mode} home={location.pathname==='/'} />);
+}
