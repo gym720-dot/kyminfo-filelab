@@ -110,7 +110,7 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
         used.add(name);zip.file(name,row.result!.blob);
       }
       const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
-      saveBlob(blob,'키미파일랩-결과.zip');setNotice(`${done.length}개 결과를 ZIP으로 저장했습니다.`);
+      saveBlob(blob,'키미파일-결과.zip');setNotice(`${done.length}개 결과를 ZIP으로 저장했습니다.`);
     }catch(e){setNotice(e instanceof Error?e.message:'ZIP 생성에 실패했습니다. 개별 다운로드를 이용해 주세요.');}
   }
   const done=rows.filter(r=>r.status==='완료'), originals=done.reduce((v,r)=>v+r.file.size,0), outputs=done.reduce((v,r)=>v+(r.result?.blob.size||r.file.size),0);

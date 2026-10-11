@@ -126,5 +126,5 @@ export async function optimizeExcel(file:File, signal?:AbortSignal, onProgress?:
     checked++;
     onProgress?.(70+Math.round(checked/fileNames.length*30));
   }
-  return {blob:output,name:resultName(file.name,'-키미파일랩','xlsx'),before:file.size,after:output.size,checked};
+  return {blob:output,name:resultName(file.name,'-키미파일','xlsx'),before:file.size,after:output.size,checked};
 }

@@ -155,7 +155,7 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
       const report = await inspectMetadata(new File([blob], 'result.' + ext(format), {type:mime(format)}));
       note = report.some(x => x.startsWith('GPS')) ? '처리 후에도 GPS 항목이 감지됩니다. 다운로드 전 확인해 주세요.' : '처리 후 지원 범위에서 GPS 항목이 검출되지 않았습니다. 모든 비표준 메타데이터 제거를 보장하지는 않습니다.';
     }
-    return {blob, name:resultName(file.name, s.mode === 'metadata' ? '-정보삭제' : '-키미파일랩', ext(format)), sourceWidth:bitmap.width, sourceHeight:bitmap.height, width, height, format, reached, note};
+    return {blob, name:resultName(file.name, s.mode === 'metadata' ? '-정보삭제' : '-키미파일', ext(format)), sourceWidth:bitmap.width, sourceHeight:bitmap.height, width, height, format, reached, note};
   } finally {
     bitmap.close();
   }
