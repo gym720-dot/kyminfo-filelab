@@ -1,15 +1,24 @@
 import {safeName} from './common';
-export function batchName(original:string,index:number,prefix:string,suffix:string,padding:number):string {
+export function batchName(original:string,index:number,prefix:string,suffix:string,padding:number,start=1):string {
+  if(!Number.isInteger(start)||start<1||start>999999||!Number.isInteger(index)||index<0)throw Error('파일 시작 번호는 1~999,999 사이 정수로 입력하세요.');
   const cleaned=original.replace(/[\\/\x00-\x1f<>:"|?*]/g,'-'),dot=cleaned.lastIndexOf('.'),ext=dot>0?cleaned.slice(dot).slice(0,10):'',stem=safeName(dot>0?cleaned.slice(0,dot):cleaned);
-  const base=safeName(`${prefix}${stem}${suffix}${padding>0?'-'+String(index+1).padStart(Math.min(6,padding),'0'):''}`);
+  const base=safeName(`${prefix}${stem}${suffix}${padding>0?'-'+String(index+start).padStart(Math.min(6,padding),'0'):''}`);
   return base.slice(0,120-ext.length)+ext;
 }
 export function uniqueNames(names:string[]):string[]{const used=new Set<string>();return names.map(source=>{let name=safeName(source);const dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';let n=2;while(used.has(name.toLowerCase())){const suffix=`-${n++}`;name=`${stem.slice(0,120-ext.length-suffix.length)}${suffix}${ext}`;}used.add(name.toLowerCase());return name;});}
-export function drawGeometry(sw:number,sh:number,width:number,height:number,fit:'stretch'|'contain'|'cover',rotation:number){
+export function cropGeometry(sw:number,sh:number,width:number,height:number,rotation:number,cropX=0.5,cropY=0.5){
+  if(![sw,sh,width,height].every(n=>Number.isFinite(n)&&n>0)||![0,90,180,270].includes(rotation)||![cropX,cropY].every(Number.isFinite))throw Error('이미지 크기와 자르기 위치를 확인하세요.');
+  const rotated=rotation===90||rotation===270,rw=rotated?sh:sw,rh=rotated?sw:sh;
+  const scale=Math.max(width/rw,height/rh),overflowX=Math.max(0,rw*scale-width),overflowY=Math.max(0,rh*scale-height);
+  const x=Math.min(1,Math.max(0,cropX)),y=Math.min(1,Math.max(0,cropY));
+  return {rw,rh,scale,overflowX,overflowY,cropX:x,cropY:y,left:overflowX*x/scale,top:overflowY*y/scale,sourceWidth:width/scale,sourceHeight:height/scale};
+}
+export function drawGeometry(sw:number,sh:number,width:number,height:number,fit:'stretch'|'contain'|'cover',rotation:number,cropX=0.5,cropY=0.5){
   if(![sw,sh,width,height].every(n=>Number.isFinite(n)&&n>0)||![0,90,180,270].includes(rotation))throw Error('이미지 크기와 회전값을 확인하세요.');
   const rotated=rotation===90||rotation===270,rw=rotated?sh:sw,rh=rotated?sw:sh;
   const scale=fit==='cover'?Math.max(width/rw,height/rh):Math.min(width/rw,height/rh);
-  return {x:width/2,y:height/2,radians:rotation*Math.PI/180,drawWidth:fit==='stretch'?(rotated?height:width):sw*scale,drawHeight:fit==='stretch'?(rotated?width:height):sh*scale};
+  const crop=fit==='cover'?cropGeometry(sw,sh,width,height,rotation,cropX,cropY):null;
+  return {x:width/2+(crop?(0.5-crop.cropX)*crop.overflowX:0),y:height/2+(crop?(0.5-crop.cropY)*crop.overflowY:0),radians:rotation*Math.PI/180,drawWidth:fit==='stretch'?(rotated?height:width):sw*scale,drawHeight:fit==='stretch'?(rotated?width:height):sh*scale};
 }
 // Header-only estimate avoids allocating oversized decoded bitmaps where dimensions are present.
 export function headerPixels(b:Uint8Array):number|undefined {

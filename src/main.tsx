@@ -5,6 +5,7 @@ import {fileSignature,formatBytes,saveBlob,safeName} from './lib/common';
 import {batchName,uniqueNames,headerPixels} from './lib/batch';
 import type {ExcelReport,ExcelOptimized} from './lib/excel';
 import type {ImageResult,ImageMode,ImageSettings,OutputFormat} from './lib/image';
+import CropEditor,{centeredCrop,type CropPosition} from './CropEditor';
 
 type Mode=ImageMode|'excel-analyze'|'excel-optimize';
 type Result=ImageResult|ExcelOptimized;
@@ -24,7 +25,11 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
   const [zipBusy,setZipBusy]=useState(false);
   const [zipProgress,setZipProgress]=useState(0);
   const [prefix,setPrefix]=useState('');const [suffix,setSuffix]=useState('');const [padding,setPadding]=useState(0);
+  const [startIndex,setStartIndex]=useState(1);
   const [selectedPreview,setSelectedPreview]=useState('');
+  const [cropPreviewId,setCropPreviewId]=useState('');
+  const [crops,setCrops]=useState<Record<string,CropPosition>>({});
+  const [cropDrafts,setCropDrafts]=useState<Record<string,CropPosition>>({});
   const working=useRef(false),adding=useRef(false);
   const [compare,setCompare]=useState(50);
   const [dragging,setDragging]=useState(false);
@@ -35,7 +40,7 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
   const dragDepth=useRef(0);
   const update=(id:string,patch:Partial<Row>)=>setRows(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
   const makeUrl=(blob:Blob)=>{const url=URL.createObjectURL(blob);objectUrls.current.add(url);return url;};
-  const clear=()=>{if(adding.current||working.current)return;controller.current?.abort();setRows([]);for(const url of objectUrls.current)URL.revokeObjectURL(url);objectUrls.current.clear();setNotice('목록을 비웠습니다.');};
+  const clear=()=>{if(adding.current||working.current)return;controller.current?.abort();setRows([]);setCrops({});setCropDrafts({});setCropPreviewId('');for(const url of objectUrls.current)URL.revokeObjectURL(url);objectUrls.current.clear();setNotice('목록을 비웠습니다.');};
   useEffect(()=>()=>{controller.current?.abort();for(const url of objectUrls.current)URL.revokeObjectURL(url);},[]);
   async function addFiles(files:File[]) {
     if(working.current||adding.current)return;
@@ -74,12 +79,15 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
   });
   async function run(ids?:string[]){
     if(working.current||adding.current)return;
+    if(mode==='resize'&&!settings.keepRatio&&settings.fit==='cover'&&dirtyCropIds.length){setNotice('미리보기에서 바꾼 자르기 위치를 파일별로 적용하거나 변경 취소한 뒤 처리해 주세요.');return;}
+    if(padding&&(!Number.isInteger(startIndex)||startIndex<1||startIndex>999999)){setNotice('파일 시작 번호는 1~999,999 사이 정수로 입력하세요.');return;}
     const pending=rows.filter(r=>(ids?ids.includes(r.id):true));
     if(!pending.length){setNotice('처리할 파일을 먼저 선택해 주세요.');return;}
     working.current=true;
     const abort=new AbortController();controller.current=abort;setBusy(true);setNotice('');
     const snapshot={...settings,mode:mode as ImageMode};
-    const names=uniqueNames(pending.map((row,i)=>{const format=snapshot.format==='original'?row.kind:snapshot.format;const extension=format==='jpeg'?'jpg':format;return batchName(isImage(mode)?row.file.name.replace(/\.[^.]+$/,'')+'.'+extension:row.file.name,i,prefix,suffix,padding);}));
+    const cropSnapshot={...crops};
+    const names=pending.map(row=>plannedNames[rows.findIndex(r=>r.id===row.id)]);
     try {
     for(const row of pending){
       if(abort.signal.aborted)break;
@@ -89,7 +97,8 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
         if(isImage(mode)){
           const {inspectMetadata,processImage}=await import('./lib/image');
           const metadata=mode==='metadata'?await inspectMetadata(row.file):undefined;
-          const result=await processImage(row.file,snapshot,abort.signal);
+          const crop=cropSnapshot[row.id]||centeredCrop;
+          const result=await processImage(row.file,{...snapshot,cropX:crop.x,cropY:crop.y},abort.signal);
           const name=names[pending.indexOf(row)],extension=result.name.slice(result.name.lastIndexOf('.'));
           result.name=name.replace(/\.[^.]+$/,'')+extension;
           const resultUrl=makeUrl(result.blob);
@@ -113,6 +122,8 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
     if(row.sourceUrl){URL.revokeObjectURL(row.sourceUrl);objectUrls.current.delete(row.sourceUrl);}
     if(row.resultUrl){URL.revokeObjectURL(row.resultUrl);objectUrls.current.delete(row.resultUrl);}
     setRows(prev=>prev.filter(r=>r.id!==row.id));
+    setCrops(prev=>{const next={...prev};delete next[row.id];return next;});
+    setCropDrafts(prev=>{const next={...prev};delete next[row.id];return next;});
   }
   async function zipResults(){
     if(working.current||adding.current)return;
@@ -137,6 +148,10 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
   const previewRows=rows.filter(r=>r.sourceUrl&&r.resultUrl);
   const firstPreview=previewRows.find(r=>r.id===selectedPreview)||previewRows[0];
   const changedDimensions=firstPreview?.result&&'width'in firstPreview.result&&(firstPreview.result.width!==firstPreview.result.sourceWidth||firstPreview.result.height!==firstPreview.result.sourceHeight);
+  const cropRow=rows.find(r=>r.id===cropPreviewId)||rows[0];
+  const dirtyCropIds=rows.filter(r=>{const a=crops[r.id]||centeredCrop,b=cropDrafts[r.id]||a;return Math.abs(a.x-b.x)>1e-7||Math.abs(a.y-b.y)>1e-7;}).map(r=>r.id);
+  const validStart=Number.isInteger(startIndex)&&startIndex>=1&&startIndex<=999999;
+  const plannedNames=uniqueNames(rows.map((row,i)=>{const format=settings.format==='original'?row.kind:settings.format,extension=format==='jpeg'?'jpg':format;return isImage(mode)?batchName(row.file.name.replace(/\.[^.]+$/,'')+'.'+extension,i,prefix,suffix,padding,validStart?startIndex:1):row.file.name;}));
   return <div className="app-shell">
     {home&&<div className="mode-tabs" role="tablist" aria-label="도구 종류"><button role="tab" aria-selected={isImage(mode)} className={isImage(mode)?'active':''} onClick={()=>switchMode('compress')}>이미지 도구</button><button role="tab" aria-selected={!isImage(mode)} className={!isImage(mode)?'active':''} onClick={()=>switchMode('excel-analyze')}>엑셀 도구</button></div>}
     <div className="upload-card">
@@ -150,14 +165,15 @@ function App({startMode,home}:{startMode:Mode;home:boolean}) {
         {mode==='compress'&&!pngOnly&&<><label>압축 방식<select value={settings.preset} onChange={e=>setSettings({...settings,preset:e.target.value as ImageSettings['preset']})}><option value="quick">빠른 압축</option><option value="high">고화질</option><option value="strong">강력 압축</option><option value="custom">직접 설정</option></select></label>{settings.preset==='custom'&&<label>화질 {settings.quality}%<input type="range" min="30" max="100" value={settings.quality} onChange={e=>setSettings({...settings,quality:Number(e.target.value)})}/></label>}</>}
         {mode==='resize'&&<><label>가로(px)<input type="number" min="0" max="16000" value={settings.width||''} onChange={e=>setSettings({...settings,width:Number(e.target.value),height:settings.keepRatio?0:settings.height})}/></label><label>세로(px)<input type="number" min="0" max="16000" value={settings.height||''} onChange={e=>setSettings({...settings,height:Number(e.target.value),width:settings.keepRatio?0:settings.width})}/></label><label className="check-label"><input type="checkbox" checked={settings.keepRatio} onChange={e=>setSettings({...settings,keepRatio:e.target.checked,height:e.target.checked&&settings.width?0:settings.height})}/> 원본 비율 유지</label><p className="option-note">비율 유지 시 가로 또는 세로 한쪽만, 해제 시 두 값을 입력해 주세요.</p></>}
         {mode==='target'&&<><label>목표 용량 (KB)<input type="number" min="1" max="30720" value={settings.targetKB} onChange={e=>setSettings({...settings,targetKB:Number(e.target.value)})}/></label><div className="preset-row">{[50,100,200,300,500,1024].map(n=><button type="button" key={n} className={settings.targetKB===n?'selected':''} onClick={()=>setSettings({...settings,targetKB:n})}>{n===1024?'1MB':n+'KB'}</button>)}</div><label className="check-label"><input type="checkbox" checked={settings.allowResize} onChange={e=>setSettings({...settings,allowResize:e.target.checked})}/> 필요하면 해상도 축소 허용</label></>}
-        {mode==='resize'&&<><label>맞춤 방식<select value={settings.fit||'stretch'} onChange={e=>setSettings({...settings,fit:e.target.value as ImageSettings['fit']})}><option value="stretch">입력 크기대로 (비율 유지 권장)</option><option value="contain">전체 보존 + 배경 여백</option><option value="cover">가운데 기준 잘라 채우기</option></select></label><label>회전<select value={settings.rotation||0} onChange={e=>setSettings({...settings,rotation:Number(e.target.value) as ImageSettings['rotation']})}><option value="0">회전 없음</option><option value="90">90도</option><option value="180">180도</option><option value="270">270도</option></select></label><div className="preset-row">{[[1000,1000,'상품 1000×1000'],[1080,1350,'4:5'],[1080,1920,'9:16'],[1920,1080,'16:9']].map(([w,h,label])=><button type="button" key={label} onClick={()=>setSettings({...settings,width:Number(w),height:Number(h),keepRatio:false,fit:label==='상품 1000×1000'?'contain':'cover',format:label==='상품 1000×1000'?'jpeg':settings.format,background:'#ffffff'})}>{label}</button>)}</div><p className="option-note">일반 이미지 규격입니다. 특정 쇼핑몰의 등록 규정 충족을 보장하지 않습니다. 가운데 자르기는 가장자리 내용이 사라질 수 있습니다.</p></>}
+        {mode==='resize'&&<><label>맞춤 방식<select value={settings.fit||'stretch'} onChange={e=>setSettings({...settings,fit:e.target.value as ImageSettings['fit'],keepRatio:e.target.value==='cover'?false:settings.keepRatio})}><option value="stretch">입력 크기대로 (비율 유지 권장)</option><option value="contain">전체 보존 + 배경 여백</option><option value="cover">자르기 위치를 골라 채우기</option></select></label><label>회전<select value={settings.rotation||0} onChange={e=>setSettings({...settings,rotation:Number(e.target.value) as ImageSettings['rotation']})}><option value="0">회전 없음</option><option value="90">90도</option><option value="180">180도</option><option value="270">270도</option></select></label><div className="preset-row">{[[1000,1000,'상품 1000×1000'],[1080,1350,'4:5'],[1080,1920,'9:16'],[1920,1080,'16:9']].map(([w,h,label])=><button type="button" key={label} onClick={()=>setSettings({...settings,width:Number(w),height:Number(h),keepRatio:false,fit:label==='상품 1000×1000'?'contain':'cover',format:label==='상품 1000×1000'?'jpeg':settings.format,background:'#ffffff'})}>{label}</button>)}</div><p className="option-note">일반 이미지 규격입니다. 특정 쇼핑몰의 등록 규정 충족을 보장하지 않습니다. 자르기는 가장자리 내용이 사라질 수 있습니다. 아래 미리보기에서 파일별 위치를 확인하세요.</p></>}
         {(settings.format==='jpeg'||settings.fit==='contain')&&<label>투명 부분·여백 배경색<input type="color" value={settings.background} onChange={e=>setSettings({...settings,background:e.target.value})}/></label>}
         {settings.format==='jpeg'&&<p className="option-note">JPG로 저장하면 투명 부분은 선택한 배경색으로 채워집니다.</p>}
         {pngOnly&&mode==='compress'&&<p className="option-note">PNG에는 화질 설정이 적용되지 않습니다. 더 작은 파일이 필요하면 WebP 변환 또는 크기 축소를 선택하세요.</p>}
         {mode==='metadata'&&<p className="option-note">재인코딩 후 검출 가능한 EXIF·GPS를 다시 검사합니다. 색상 프로파일이나 일부 비표준 정보는 별도로 확인해 주세요.</p>}
       </div>}
       {!isImage(mode)&&<p className="option-note">{mode==='excel-analyze'?'분석은 읽기 전용이며 원본을 변경하지 않습니다.':'내부 항목의 바이트를 비교하고 실제로 작아진 경우에만 결과를 제공합니다. 전자서명·매크로·암호화 파일은 제외합니다.'}</p>}
-      {isImage(mode)&&<div className="options-grid"><label>파일명 접두사<input value={prefix} maxLength={30} onChange={e=>setPrefix(e.target.value)}/></label><label>파일명 접미사<input value={suffix} maxLength={30} onChange={e=>setSuffix(e.target.value)}/></label><label>일련번호 자리수<select value={padding} onChange={e=>setPadding(Number(e.target.value))}><option value={0}>추가 안 함</option><option value={2}>01</option><option value={3}>001</option><option value={4}>0001</option></select></label><p className="option-note">파일명은 처리 시 적용됩니다. 같은 이름은 ZIP에서 구분하며 원본 파일은 변경하지 않습니다.</p></div>}
+      {isImage(mode)&&<div className="options-grid"><label>파일명 접두사<input value={prefix} maxLength={30} onChange={e=>setPrefix(e.target.value)}/></label><label>파일명 접미사<input value={suffix} maxLength={30} onChange={e=>setSuffix(e.target.value)}/></label><label>일련번호 자리수<select value={padding} onChange={e=>setPadding(Number(e.target.value))}><option value={0}>추가 안 함</option><option value={2}>01</option><option value={3}>001</option><option value={4}>0001</option></select></label><label>시작 번호<input type="number" min="1" max="999999" step="1" value={startIndex} disabled={!padding} onChange={e=>setStartIndex(Number(e.target.value))}/></label><p className="option-note">파일명은 처리 시 적용됩니다. 같은 이름은 ZIP에서 구분하며 원본 파일은 변경하지 않습니다. 재시도해도 목록에서의 번호를 유지합니다.</p>{padding>0&&!validStart&&<p role="alert">시작 번호는 1~999,999 사이 정수로 입력하세요.</p>}<details className="planned-names"><summary>새 설정으로 처리할 파일명 미리보기 ({rows.length}개)</summary><ol>{plannedNames.map((name,i)=><li key={rows[i].id}>{name}</li>)}</ol><p className="small-hint">현재 다운로드 파일명은 최근 처리 결과 기준입니다. 새 이름은 다시 처리한 뒤 적용됩니다.</p></details></div>}
+      {mode==='resize'&&!settings.keepRatio&&settings.fit==='cover'&&cropRow&&<div className="crop-workspace"><label>자르기 미리보기 파일<select value={cropRow.id} onChange={e=>setCropPreviewId(e.target.value)}>{rows.map(r=><option key={r.id} value={r.id}>{r.file.name}</option>)}</select></label>{busy||zipBusy?<p>처리 중에는 미리보기 메모리를 해제합니다.</p>:<CropEditor file={cropRow.file} value={cropDrafts[cropRow.id]||crops[cropRow.id]||centeredCrop} applied={crops[cropRow.id]||centeredCrop} width={settings.width} height={settings.height} rotation={settings.rotation||0} format={settings.format==='original'?(cropRow.kind||'png'):settings.format} background={settings.background} disabled={busy||zipBusy} onEdit={position=>setCropDrafts(prev=>({...prev,[cropRow.id]:position}))} onApply={()=>{const position=cropDrafts[cropRow.id]||crops[cropRow.id]||centeredCrop;setCrops(prev=>({...prev,[cropRow.id]:{...position}}));setNotice('이 파일의 자르기 위치를 적용했습니다. 파일 처리하기로 결과를 생성하세요.');}} onDiscard={()=>setCropDrafts(prev=>{const next={...prev};delete next[cropRow.id];return next;})}/>}<p role="status" className="small-hint">적용 전 자르기 변경 {dirtyCropIds.length}개 · 아직 적용하지 않은 다른 파일의 변경도 유지됩니다.</p>{dirtyCropIds.length>0&&<button type="button" className="subtle-button" onClick={()=>setCropDrafts({})}>모든 파일의 적용 전 변경 취소</button>}</div>}
       </fieldset><div className="action-row"><button className="primary-button" disabled={busy||zipBusy} onClick={()=>void run()}>{busy?'처리 중…':mode==='excel-analyze'?'용량 분석하기':mode==='excel-optimize'?'분석 후 안전하게 최적화':done.length?'전체 다시 처리':'파일 처리하기'}</button>{busy&&<button className="subtle-button" onClick={()=>controller.current?.abort()}>작업 취소</button>}{rows.some(r=>r.status==='실패')&&<button className="subtle-button" disabled={busy||zipBusy} onClick={()=>void run(rows.filter(r=>r.status==='실패').map(r=>r.id))}>실패한 파일만 재시도</button>}{rows.some(r=>r.status==='취소')&&<button className="subtle-button" disabled={busy||zipBusy} onClick={()=>void run(rows.filter(r=>r.status==='취소').map(r=>r.id))}>취소한 파일 이어서 처리</button>}<button className="subtle-button" disabled={busy||zipBusy} onClick={clear}>목록 비우기</button></div>
     </div>}
     {notice&&<p className="notice" role="status">{notice}</p>}

@@ -1,6 +1,7 @@
 import ExifReader from 'exifreader';
 import { fileSignature, resultName } from './common';
-import {drawGeometry,headerPixels} from './batch';
+import {headerPixels} from './batch';
+import {paintImage} from './render';
 
 export type ImageMode = 'compress' | 'resize' | 'convert' | 'target' | 'metadata';
 export type OutputFormat = 'jpeg' | 'png' | 'webp';
@@ -17,6 +18,8 @@ export interface ImageSettings {
   background: string;
   fit?: 'stretch'|'contain'|'cover';
   rotation?: 0|90|180|270;
+  cropX?: number;
+  cropY?: number;
 }
 export interface ImageResult {
   blob: Blob;
@@ -45,21 +48,13 @@ async function toBlob(canvas: HTMLCanvasElement, format: OutputFormat, quality: 
   return blob;
 }
 
-function draw(bitmap: ImageBitmap, width: number, height: number, format: OutputFormat, background: string,fit:'stretch'|'contain'|'cover'='stretch',rotation=0): HTMLCanvasElement {
+function draw(bitmap: ImageBitmap, width: number, height: number, format: OutputFormat, background: string,fit:'stretch'|'contain'|'cover'='stretch',rotation=0,cropX=0.5,cropY=0.5): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d', {alpha: format !== 'jpeg'});
   if (!ctx) throw new Error('이미지 캔버스를 만들 수 없습니다.');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  if (format === 'jpeg' || fit==='contain') {
-    ctx.fillStyle = /^#[0-9a-fA-F]{6}$/.test(background) ? background : '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-  }
-  const g=drawGeometry(bitmap.width,bitmap.height,width,height,fit,rotation);
-  ctx.translate(g.x,g.y);ctx.rotate(g.radians);
-  ctx.drawImage(bitmap,-g.drawWidth/2,-g.drawHeight/2,g.drawWidth,g.drawHeight);
+  paintImage(ctx,bitmap,width,height,format,background,fit,rotation,cropX,cropY);
   return canvas;
 }
 
@@ -118,7 +113,7 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
       }
     }
     if (width < 1 || height < 1 || width * height > 32_000_000) throw new Error('출력 이미지 크기가 허용 범위를 벗어났습니다.');
-    let canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation);
+    let canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation,s.cropX,s.cropY);
     const normalQuality = qualityFor(s);
     let blob = await toBlob(canvas, format, normalQuality);
     let reached: boolean | undefined;
@@ -150,7 +145,7 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
         if (!s.allowResize || round === rounds - 1) break;
         width = Math.max(1, Math.round(width * 0.8));
         height = Math.max(1, Math.round(height * 0.8));
-        canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation);
+        canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation,s.cropX,s.cropY);
         blob = await toBlob(canvas, format, normalQuality);
         consider(blob);
       }
