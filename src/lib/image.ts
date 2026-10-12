@@ -1,5 +1,6 @@
 import ExifReader from 'exifreader';
 import { fileSignature, resultName } from './common';
+import {drawGeometry,headerPixels} from './batch';
 
 export type ImageMode = 'compress' | 'resize' | 'convert' | 'target' | 'metadata';
 export type OutputFormat = 'jpeg' | 'png' | 'webp';
@@ -14,6 +15,8 @@ export interface ImageSettings {
   targetKB: number;
   allowResize: boolean;
   background: string;
+  fit?: 'stretch'|'contain'|'cover';
+  rotation?: 0|90|180|270;
 }
 export interface ImageResult {
   blob: Blob;
@@ -42,7 +45,7 @@ async function toBlob(canvas: HTMLCanvasElement, format: OutputFormat, quality: 
   return blob;
 }
 
-function draw(bitmap: ImageBitmap, width: number, height: number, format: OutputFormat, background: string): HTMLCanvasElement {
+function draw(bitmap: ImageBitmap, width: number, height: number, format: OutputFormat, background: string,fit:'stretch'|'contain'|'cover'='stretch',rotation=0): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -50,11 +53,13 @@ function draw(bitmap: ImageBitmap, width: number, height: number, format: Output
   if (!ctx) throw new Error('이미지 캔버스를 만들 수 없습니다.');
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  if (format === 'jpeg') {
+  if (format === 'jpeg' || fit==='contain') {
     ctx.fillStyle = /^#[0-9a-fA-F]{6}$/.test(background) ? background : '#ffffff';
     ctx.fillRect(0, 0, width, height);
   }
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  const g=drawGeometry(bitmap.width,bitmap.height,width,height,fit,rotation);
+  ctx.translate(g.x,g.y);ctx.rotate(g.radians);
+  ctx.drawImage(bitmap,-g.drawWidth/2,-g.drawHeight/2,g.drawWidth,g.drawHeight);
   return canvas;
 }
 
@@ -87,29 +92,33 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
   if (!kind || kind === 'zip') throw new Error('JPG, PNG, WebP 이미지만 처리할 수 있습니다.');
   if (file.size > 30 * 1024 * 1024) throw new Error('이미지는 한 파일당 30MB 이하만 처리합니다.');
   if (kind === 'webp' && await animatedWebp(file)) throw new Error('움직이는 WebP는 프레임 보존을 위해 처리하지 않습니다.');
+  const pixels=headerPixels(new Uint8Array(await file.slice(0,1024*1024).arrayBuffer()));
+  if(pixels!==undefined&&pixels>32_000_000)throw new Error('이미지는 3,200만 픽셀 이하로 줄여 주세요. 디코딩 전 크기 검사에서 중단했습니다.');
   const bitmap = await decode(file);
   try {
     if (signal?.aborted) throw new Error('작업이 취소되었습니다.');
-    if (bitmap.width * bitmap.height > 80_000_000) throw new Error('이미지 픽셀 수가 처리 한도를 넘었습니다.');
+    if (bitmap.width * bitmap.height > 32_000_000) throw new Error('이미지 픽셀 수가 3,200만 픽셀 처리 한도를 넘었습니다.');
     const original = kind as OutputFormat;
     const format = s.format === 'original' ? original : s.format;
-    let width = bitmap.width;
-    let height = bitmap.height;
+    const rotated=s.rotation===90||s.rotation===270;
+    const naturalWidth=rotated?bitmap.height:bitmap.width,naturalHeight=rotated?bitmap.width:bitmap.height;
+    let width = naturalWidth;
+    let height = naturalHeight;
     if (s.mode === 'resize') {
       const w = Number(s.width), h = Number(s.height);
       if (![w,h].every(n => Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 16000)) throw new Error('가로·세로는 0부터 16000까지의 정수로 입력해 주세요.');
       if (s.keepRatio) {
         if (w > 0 && h > 0) throw new Error('비율 유지 시 가로 또는 세로 한쪽만 입력해 주세요.');
-        if (w > 0) { width = w; height = Math.round(bitmap.height * width / bitmap.width); }
-        else if (h > 0) { height = h; width = Math.round(bitmap.width * height / bitmap.height); }
+        if (w > 0) { width = w; height = Math.round(naturalHeight * width / naturalWidth); }
+        else if (h > 0) { height = h; width = Math.round(naturalWidth * height / naturalHeight); }
         else throw new Error('가로 또는 세로 크기를 입력해 주세요.');
       } else {
         if (w < 1 || h < 1) throw new Error('비율 유지를 끄면 가로와 세로를 모두 입력해 주세요.');
         width = w; height = h;
       }
     }
-    if (width < 1 || height < 1 || width * height > 80_000_000) throw new Error('출력 이미지 크기가 허용 범위를 벗어났습니다.');
-    let canvas = draw(bitmap, width, height, format, s.background);
+    if (width < 1 || height < 1 || width * height > 32_000_000) throw new Error('출력 이미지 크기가 허용 범위를 벗어났습니다.');
+    let canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation);
     const normalQuality = qualityFor(s);
     let blob = await toBlob(canvas, format, normalQuality);
     let reached: boolean | undefined;
@@ -141,7 +150,7 @@ export async function processImage(file: File, s: ImageSettings, signal?: AbortS
         if (!s.allowResize || round === rounds - 1) break;
         width = Math.max(1, Math.round(width * 0.8));
         height = Math.max(1, Math.round(height * 0.8));
-        canvas = draw(bitmap, width, height, format, s.background);
+        canvas = draw(bitmap, width, height, format, s.background,s.fit,s.rotation);
         blob = await toBlob(canvas, format, normalQuality);
         consider(blob);
       }

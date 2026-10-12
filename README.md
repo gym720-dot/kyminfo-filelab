@@ -69,3 +69,7 @@ scripts/make-fixtures.py는 Pillow·openpyxl이 있는 환경에서 예제 이�
 ## 2026-10-12 검색 오류 수정
 
 생성기가 만드는 최상위 `404.html`을 Vite 입력에 포함했습니다. 없는 주소의 SPA 폴백을 방지하고, 404 페이지는 사이트맵에서 제외하며 noindex를 표시합니다. 빌드 후 `scripts/check-build.mjs`로 14개 HTML·13개 사이트맵 URL·내부 참조·CSP·미리보기 noindex를 확인합니다. Pages 미리보기 호스트에만 noindex 응답 규칙을 적용합니다.
+
+## 2026-10-12 개선 검토
+
+[로컬 변경·검증 범위](IMPLEMENTATION-2026-10-12.md). 0단계 이후 추가 개선은 운영 미배포이며 실제 브라우저/결과물 검증은 남아 있습니다.
