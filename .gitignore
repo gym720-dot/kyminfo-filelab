@@ -4,3 +4,5 @@ dist/
 .DS_Store
 tests/fixtures/
 tests/actual/
+.wrangler/
+.dev.vars*

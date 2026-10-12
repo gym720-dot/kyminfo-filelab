@@ -4,3 +4,9 @@
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com 'sha256-eNkOoSYu11j5O8nu4sedk1PJQ7TXyT95+6Y54B0WP9Y=' 'sha256-zWjYFHN5sBD38L3XY2OAkNhac0hovmzPqgJEt7K/P1s=' 'sha256-583z4/caKQtQ4wGrORIBZuo1U8ctUBhhUCgUEvEKhTA=' 'sha256-WyriJA4BYT7fhpPAc8VTzfJSGKTaeOwUrxA7JL9pscg=' 'sha256-Y7jyXP32nYSWVvHSTa5yP6KcHENRI4/Ay0c2pa8zW7o=' 'sha256-mIim47M8im8t1wKTJMbL9t3C/LODGaxMktUpROmrDPI=' 'sha256-kpM4RjT5dK0aYfg4OT7aLLjr305wIJeJLKGiCKS86dE=' 'sha256-0C5nGjmqlonXZBPH6bHYH1o+3pLFuM/tQIlYQLv0mIQ=' 'sha256-mHcGhft+Xv09fBdTdvCyE4qpOIfjB7X8AriNrP9rWso=' 'sha256-q2spVjg+mgrhsc4KMYbGiVHVb6Z3zGCpzt2J/c/VNlM=' 'sha256-h/ctIymNmBt3eDNsHHusKwEME3c2SSk5DyprSFNu7UA=' 'sha256-eZmrSZDlx6ce3IffnMkG+jPdLLFxJnNdxzuGiNYTGmw=' 'sha256-oWw78RMAXu3roy0+k2cFdltoGm8uG8nJY78FSK3Yxa0='; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self' https://cloudflareinsights.com; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.:project.pages.dev/*
+  X-Robots-Tag: noindex

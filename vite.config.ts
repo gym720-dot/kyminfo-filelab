@@ -5,7 +5,10 @@ const routes = ['', 'image-compress', 'image-resize', 'image-to-webp', 'image-un
 export default defineConfig({
   build: {
     rollupOptions: {
-      input: Object.fromEntries(routes.map(route => [route || 'home', resolve(import.meta.dirname, route, 'index.html')]))
+      input: {
+        ...Object.fromEntries(routes.map(route => [route || 'home', resolve(import.meta.dirname, route, 'index.html')])),
+        notFound: resolve(import.meta.dirname, '404.html')
+      }
     }
   }
 });

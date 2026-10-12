@@ -1,5 +1,5 @@
 import { policyPages } from './policies.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -80,7 +80,20 @@ for(const p of pages){
   const json=output.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
   if(json) schemaHashes.push(`'sha256-${createHash('sha256').update(json).digest('base64')}'`);
 }
+// Keep a real top-level 404 in the build, preventing Pages' SPA fallback.
+// This page deliberately stays outside the sitemap and JSON-LD hash list.
+const notFound = html({slug:'404',title:'페이지를 찾을 수 없습니다 | 키미 파일',desc:'요청한 페이지를 찾을 수 없습니다. 키미 파일 홈에서 필요한 도구를 찾아보세요.',h1:'페이지를 찾을 수 없습니다',lead:'주소가 바뀌었거나 존재하지 않는 페이지입니다. 상단 로고를 눌러 홈으로 이동해 주세요.'})
+ .replace('<head>','<head><meta name="robots" content="noindex, follow">')
+ .replace(/<link rel="canonical"[^>]*>/,'')
+ .replace(/<meta property="og:url"[^>]*>/,'')
+ .replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/,'');
+writeFileSync(resolve(root,'404.html'),notFound,'utf8');
 writeFileSync(resolve(root,'public','robots.txt'),`User-agent: *\nAllow: /\nSitemap: ${domain}/sitemap.xml\n`);
 writeFileSync(resolve(root,'public','sitemap.xml'),`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages.map(p=>`  <url><loc>${domain+path(p.slug)}</loc></url>`).join('\n')}\n</urlset>\n`);
 writeFileSync(resolve(root,'public','_headers'),`/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: strict-origin-when-cross-origin\n  X-Frame-Options: DENY\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com ${schemaHashes.join(' ')}; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self' https://cloudflareinsights.com; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'\n`);
-console.log(`Generated ${pages.length} static pages.`);
+// Host rules apply only to Pages preview domains; production remains indexable.
+// Include both the project domain and deployment/branch preview domains.
+const headersPath=resolve(root,'public','_headers');
+// The security headers above are generated first; append host-specific rules.
+appendFileSync(headersPath,`\nhttps://:project.pages.dev/*\n  X-Robots-Tag: noindex\n\nhttps://:version.:project.pages.dev/*\n  X-Robots-Tag: noindex\n`);
+console.log(`Generated ${pages.length} static pages and a standalone 404.`);

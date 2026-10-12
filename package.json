@@ -7,7 +7,7 @@
   "scripts": {
     "generate": "node scripts/generate.mjs",
     "dev": "node scripts/generate.mjs && vite --host 0.0.0.0",
-    "build": "node scripts/generate.mjs && tsc --noEmit && vite build",
+    "build": "node scripts/generate.mjs && tsc --noEmit && vite build && node scripts/check-build.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },

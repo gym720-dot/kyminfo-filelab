@@ -1,6 +1,6 @@
 # 키미 파일
 
-file.kyminfo.com에 배포할 한국어 파일 도구입니다. 기존 키미 계산·키미 타임의 K 로고와 카드형 디자인을 이어갑니다. 회원가입, 자체 DB, 파일 업로드 API는 없습니다.
+file.kyminfo.com에서 운영하는 한국어 파일 도구입니다. 기존 키미 계산·키미 타임의 K 로고와 카드형 디자인을 이어갑니다. 회원가입, 자체 DB, 파일 업로드 API는 없습니다.
 
 ## 현재 기능
 
@@ -15,7 +15,7 @@ file.kyminfo.com에 배포할 한국어 파일 도구입니다. 기존 키미 �
 
 Node.js 22 이상과 pnpm 11이 필요합니다. 프로젝트 폴더에서 pnpm install, pnpm dev를 순서대로 실행하고 http://localhost:5173/ 을 엽니다. 프로덕션 빌드는 pnpm build이며 결과는 dist 폴더에 생성됩니다. 페이지 내용을 수정했다면 scripts/generate.mjs를 실행하거나 다시 빌드하세요.
 
-## Cloudflare Pages 배포 준비
+## Cloudflare Pages 배포 설정
 
 GitHub 저장소에 이 폴더를 올린 뒤 Cloudflare Pages에서 연결합니다.
 
@@ -60,3 +60,12 @@ scripts/make-fixtures.py는 Pillow·openpyxl이 있는 환경에서 예제 이�
 ## 다음 확장
 
 긴 작업의 Worker 처리와 즉시 취소, 모바일 기기의 대용량 성능 검증이 우선입니다. 파일명 일괄 변경과 텍스트 워터마크는 핵심 도구의 안정성 확인 후 검토합니다. 공개 전에는 실제 Excel 데스크톱에서 최적화 결과를 열고, iOS Safari·Android Chrome에서도 큰 파일과 다운로드 동작을 확인해야 합니다.
+
+
+## 운영 기준선
+
+2026-10-12 운영 확인: HTTPS 배포, Google·네이버 소유확인 및 사이트맵 제출은 완료한 상태입니다. Google URL Inspection에서 홈페이지 색인 PASS를 확인했습니다. 하위 페이지 전체 색인이나 네이버 검색 노출을 보장하는 의미는 아닙니다. Cloudflare Web Analytics가 활성화되어 있으며 개인정보 안내에 반영되어 있습니다. 계산 입력·문서·파일 내용은 통계로 전송하지 않습니다. 광고는 비활성입니다. 운영 점검 증빙은 개발 작업 공간의 `outputs/phase0-2026-10-12/REPORT.md`에 보관합니다.
+
+## 2026-10-12 검색 오류 수정
+
+생성기가 만드는 최상위 `404.html`을 Vite 입력에 포함했습니다. 없는 주소의 SPA 폴백을 방지하고, 404 페이지는 사이트맵에서 제외하며 noindex를 표시합니다. 빌드 후 `scripts/check-build.mjs`로 14개 HTML·13개 사이트맵 URL·내부 참조·CSP·미리보기 noindex를 확인합니다. Pages 미리보기 호스트에만 noindex 응답 규칙을 적용합니다.
