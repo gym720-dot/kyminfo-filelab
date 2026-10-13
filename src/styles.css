@@ -59,4 +59,5 @@
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:1}
 :focus-visible,.family-top>summary:focus-visible,.contact-method a.text-link:focus-visible{outline:3px solid #3d55c6;outline-offset:3px}
 .icon-button{min-width:44px;min-height:44px;display:inline-grid;place-items:center}
+.family-top .family-list{left:auto;right:0}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}.tool-card:hover,.button:hover{transform:none}}
